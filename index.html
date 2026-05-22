@@ -4,11 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FeD — Face Detection Attendance System</title>
+  <meta name="description" content="Face Detection Attendance System with custom ML model training and PostgreSQL backend" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.2/dist/face-api.js" defer></script>
 </head>
 <body>
 
@@ -222,6 +222,10 @@
           <video id="attVideo" autoplay muted playsinline></video>
           <canvas id="attCanvas"></canvas>
           <div class="scan-line" id="attScan"></div>
+          <div class="scan-hud" id="scanHud">
+            <span class="scan-pill offline" id="scanState">Camera idle</span>
+            <p class="scan-copy" id="scanCopy">Enable the camera to start real-time face scanning.</p>
+          </div>
         </div>
 
         <!-- Recognition result banner -->

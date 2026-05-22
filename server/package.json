@@ -1,0 +1,22 @@
+{
+  "name": "fed-server",
+  "version": "2.0.0",
+  "description": "FeD Face Detection Attendance System — Backend with custom ML training + PostgreSQL",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "db:init": "node db/init.js",
+    "train": "node ml/train_cli.js"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs-node": "^4.22.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1",
+    "pg": "^8.13.1",
+    "sharp": "^0.33.5",
+    "uuid": "^11.1.0"
+  }
+}

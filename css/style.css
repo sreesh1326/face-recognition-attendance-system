@@ -393,6 +393,64 @@ body {
   background: #fff; animation: pulse-dot 1s infinite;
 }
 
+.scan-hud {
+  position: absolute; left: 12px; right: 12px; bottom: 12px;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 12px;
+  background: rgba(6, 2, 15, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+}
+
+.scan-pill {
+  display: inline-flex; align-items: center;
+  width: fit-content;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 1.2px; text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.scan-pill.offline {
+  color: var(--text-muted);
+  background: rgba(124, 111, 160, 0.14);
+  border-color: rgba(124, 111, 160, 0.28);
+}
+
+.scan-pill.searching {
+  color: var(--warning);
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.28);
+}
+
+.scan-pill.detected {
+  color: #9ae6b4;
+  background: rgba(52, 211, 153, 0.12);
+  border-color: rgba(52, 211, 153, 0.3);
+}
+
+.scan-pill.matched {
+  color: var(--success);
+  background: var(--success-bg);
+  border-color: var(--success-bdr);
+}
+
+.scan-pill.error {
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-color: var(--danger-bdr);
+}
+
+.scan-copy {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
 /* ── CAPTURE PREVIEW ─────────────────────────────────── */
 .capture-preview {
   display: none; text-align: center; margin-top: 16px;

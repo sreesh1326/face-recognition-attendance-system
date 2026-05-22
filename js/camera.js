@@ -10,6 +10,15 @@ const Camera = (() => {
   let attRafId    = null;
   let faceLoopOn  = false;
 
+  function clearRegOverlay() {
+    const canvas = document.getElementById('regOverlay');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+
   /* ── Shared: getUserMedia wrapper ─────────────────── */
   async function openCamera() {
     return navigator.mediaDevices.getUserMedia({
@@ -24,8 +33,13 @@ const Camera = (() => {
       regStream = await openCamera();
 
       const video = document.getElementById('regVideo');
+      const preview = document.getElementById('capturePreview');
+
+      clearRegOverlay();
+      if (preview) preview.style.display = 'none';
       video.srcObject = regStream;
       video.style.display = 'block';
+      await video.play().catch(() => {});
 
       document.getElementById('regCamIdle').style.display   = 'none';
       document.getElementById('regFrame').style.visibility  = 'visible';
@@ -64,6 +78,7 @@ const Camera = (() => {
 
     const video = document.getElementById('regVideo');
     if (video) { video.srcObject = null; video.style.display = 'none'; }
+    clearRegOverlay();
 
     document.getElementById('regCamIdle').style.display   = 'flex';
     document.getElementById('regFrame').style.visibility  = 'hidden';
@@ -108,7 +123,16 @@ const Camera = (() => {
       return;
     }
 
+    if (!navigator.mediaDevices?.getUserMedia) {
+      UI.toast('This browser does not support camera access.', 'error');
+      Recognition.setScanStatus('error', 'Your browser does not expose camera APIs for live face scanning.');
+      return;
+    }
+
+    if (attStream) return;
+
     try {
+      Recognition.setScanStatus('searching', 'Requesting camera access so live face scanning can start.');
       attStream = await openCamera();
 
       const video = document.getElementById('attVideo');
@@ -120,9 +144,12 @@ const Camera = (() => {
       document.getElementById('btnStartAtt').disabled     = true;
       document.getElementById('btnStopAtt').disabled      = false;
 
+      Recognition.setScanStatus('searching', 'Camera enabled. Scanning the live feed for registered faces.');
+
       video.addEventListener('play', () => _attRecognitionLoop(video), { once: true });
     } catch (err) {
       UI.toast('Camera access denied — please allow camera permission.', 'error');
+      Recognition.setScanStatus('error', 'Camera permission was denied. Allow access and try again.');
       console.error('[Camera] startAttendanceCamera:', err);
     }
   }
@@ -158,6 +185,7 @@ const Camera = (() => {
     document.getElementById('attScan').style.display    = 'none';
     document.getElementById('btnStartAtt').disabled     = false;
     document.getElementById('btnStopAtt').disabled      = true;
+    Recognition.setScanStatus('offline', 'Enable the camera to start real-time face scanning.');
 
     const res = document.getElementById('recResult');
     if (res) res.classList.remove('show');

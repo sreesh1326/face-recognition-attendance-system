@@ -1,13 +1,15 @@
 /* ═══════════════════════════════════════════════════════
    FeD — recognition.js
-   Recognition Module: model loading, face matching, canvas drawing
+   Recognition Module: communicates with backend ML pipeline
+   No client-side face-api.js — all ML runs on the server
+   with custom-trained CNN models and PostgreSQL storage
    ═══════════════════════════════════════════════════════ */
 
 const Recognition = (() => {
 
-  const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.2/model';
+  const API_BASE = window.location.origin + '/api';
 
-  /* status: 'loading' | 'ready' | 'sim' */
+  /* status: 'loading' | 'ready' | 'error' */
   let _status = 'loading';
 
   /* cooldown: prevent spamming the same attendance */
@@ -15,7 +17,28 @@ const Recognition = (() => {
   let _lastMarkedAt   = 0;
   const COOLDOWN_MS   = 6000;
 
-  /* ── Model loading ──────────────────────────────────── */
+  /* recognition interval */
+  let _recognitionInterval = null;
+
+  function setScanStatus(state, message) {
+    const badge = document.getElementById('scanState');
+    const copy = document.getElementById('scanCopy');
+    if (!badge || !copy) return;
+
+    badge.className = `scan-pill ${state}`;
+    const labels = {
+      offline: 'Camera idle',
+      searching: 'Scanning',
+      detected: 'Face detected',
+      matched: 'Match found',
+      error: 'Scan blocked'
+    };
+
+    badge.textContent = labels[state] || 'Scanning';
+    copy.textContent = message;
+  }
+
+  /* ── Check backend health + ML pipeline status ─────── */
   async function loadModels() {
     const dot    = document.getElementById('loaderDot');
     const text   = document.getElementById('loaderText');
@@ -27,128 +50,111 @@ const Recognition = (() => {
     };
 
     try {
-      step(10, 'Loading TinyFaceDetector…');
-      await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+      step(20, 'Connecting to ML backend server…');
 
-      step(50, 'Loading FaceLandmark68Net…');
-      await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+      const resp = await fetch(`${API_BASE}/stats`);
+      if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
 
-      step(85, 'Loading FaceRecognitionNet…');
-      await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+      step(60, 'Loading custom CNN embedding model…');
+      const data = await resp.json();
 
-      step(100, 'All models loaded — system ready');
-      if (dot) { dot.className = 'loader-dot ready'; }
-      _status = 'ready';
-      UI.setStatus('online', 'ONLINE');
-      UI.toast('Face recognition engine ready.', 'success');
+      step(80, 'Initializing face recognition pipeline…');
+
+      if (data.success) {
+        step(100, `ML pipeline ready — ${data.totalUsers} users, ${data.pipeline.totalEmbeddings} embeddings`);
+        if (dot) { dot.className = 'loader-dot ready'; }
+        _status = 'ready';
+        UI.setStatus('online', 'ONLINE');
+        UI.toast('Custom face recognition engine ready.', 'success');
+      } else {
+        throw new Error('Pipeline not ready');
+      }
 
     } catch (err) {
-      console.warn('[Recognition] Model load failed, entering simulation mode:', err);
+      console.error('[Recognition] Backend connection failed:', err);
       if (dot)  dot.className = 'loader-dot error';
-      if (text) text.textContent = 'Simulation mode — models unavailable';
-      _status = 'sim';
-      UI.setStatus('sim', 'SIMULATION');
-      UI.toast('Simulation mode active (CDN models unavailable).', 'warning');
+      if (text) text.textContent = 'Backend offline — start the server with: cd server && npm start';
+      _status = 'error';
+      UI.setStatus('offline', 'OFFLINE');
+      UI.toast('Backend server not reachable. Start the server first.', 'error');
     }
   }
 
   function modelsReady() { return _status === 'ready'; }
 
-  /* ── Build FaceMatcher from registered descriptors ─── */
-  function buildMatcher() {
-    const students = App.getStudents();
-    const labeled  = students
-      .filter(s => s.descriptor && s.descriptor.length > 0)
-      .map(s => new faceapi.LabeledFaceDescriptors(
-        s.roll,
-        [new Float32Array(s.descriptor)]
-      ));
-    if (labeled.length === 0) return null;
-    return new faceapi.FaceMatcher(labeled, 0.52);
-  }
-
-  /* ── Extract descriptor from a captured image ──────── */
+  /* ── Extract face embedding via backend ────────────── */
   async function extractDescriptor(imageDataUrl) {
     if (_status !== 'ready') return null;
     try {
-      // Create an img element to feed to face-api
-      const img = await new Promise((resolve, reject) => {
-        const el = new Image();
-        el.onload  = () => resolve(el);
-        el.onerror = reject;
-        el.src     = imageDataUrl;
+      const resp = await fetch(`${API_BASE}/recognize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photo: imageDataUrl })
       });
-      const det = await faceapi
-        .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.4 }))
-        .withFaceLandmarks()
-        .withFaceDescriptor();
-      return det ? Array.from(det.descriptor) : null;
+      const data = await resp.json();
+      // For registration, we just need to confirm a face was processed
+      return data.success ? 'valid' : null;
     } catch (err) {
-      console.error('[Recognition] extractDescriptor:', err);
+      console.error('[Recognition] extractDescriptor error:', err);
       return null;
     }
   }
 
   /* ── Attendance recognition loop (called per frame) ── */
   async function runDetection(video, canvas, ctx) {
-    if (_status === 'ready') {
-      await _realDetection(video, ctx);
-    } else if (_status === 'sim') {
-      _simulateDetection(canvas, ctx);
+    if (_status !== 'ready') {
+      setScanStatus('searching', 'Connecting to ML backend…');
+      return;
     }
+    await _serverDetection(video, canvas, ctx);
   }
 
-  async function _realDetection(video, ctx) {
+  async function _serverDetection(video, canvas, ctx) {
+    // Capture current frame as JPEG data URL
     const W = video.videoWidth, H = video.videoHeight;
-    const scaleX = (ctx.canvas.width  / W) || 1;
-    const scaleY = (ctx.canvas.height / H) || 1;
+    canvas.width  = W;
+    canvas.height = H;
+    ctx.drawImage(video, 0, 0, W, H);
+    const frameDataUrl = canvas.toDataURL('image/jpeg', 0.7);
 
-    let detections;
     try {
-      detections = await faceapi
-        .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.4 }))
-        .withFaceLandmarks()
-        .withFaceDescriptors();
-    } catch (_) { return; }
+      const resp = await fetch(`${API_BASE}/recognize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photo: frameDataUrl })
+      });
+      const data = await resp.json();
 
-    const matcher = buildMatcher();
-
-    for (const det of detections) {
-      const { x, y, width, height } = det.detection.box;
-      const bx = x * scaleX, by = y * scaleY;
-      const bw = width * scaleX, bh = height * scaleY;
-
-      let student = null;
-      if (matcher) {
-        const match = matcher.findBestMatch(det.descriptor);
-        if (match.label !== 'unknown') {
-          student = App.getStudents().find(s => s.roll === match.label) || null;
-        }
+      if (!data.success) {
+        setScanStatus('searching', 'Scanning live feed for faces…');
+        return;
       }
 
-      _drawBox(ctx, bx, by, bw, bh, student ? student.name : 'Unknown', !!student);
+      if (data.matched) {
+        const user = data.user;
+        const conf = (data.confidence * 100).toFixed(1);
 
-      if (student) _tryMarkattendance(student);
-    }
-  }
+        // Draw bounding box (centered estimate since server returns match only)
+        const bw = 180, bh = 220;
+        const bx = (W - bw) / 2, by = (H - bh) / 2;
+        _drawBox(ctx, bx, by, bw, bh, `${user.name} (${conf}%)`, true);
 
-  let _simFrame = 0;
-  function _simulateDetection(canvas, ctx) {
-    _simFrame++;
-    if (_simFrame % 2 !== 0) return; // slow down sim rate
+        setScanStatus('matched', `${user.name} recognized with ${conf}% confidence.`);
+        _tryMarkAttendance(user, data.confidence);
+      } else {
+        // Draw unknown box
+        const bw = 180, bh = 220;
+        const bx = (W - bw) / 2, by = (H - bh) / 2;
+        _drawBox(ctx, bx, by, bw, bh, 'Unknown', false);
 
-    const students = App.getStudents();
-    if (students.length === 0) return;
-
-    const W = canvas.width, H = canvas.height;
-    const bw = 160, bh = 200;
-    const bx = (W - bw) / 2, by = (H - bh) / 2;
-
-    const student = students[0];
-    _drawBox(ctx, bx, by, bw, bh, student.name, true);
-
-    if (Date.now() - _lastMarkedAt > COOLDOWN_MS) {
-      _tryMarkAttendance(student);
+        const reason = data.bestScore
+          ? `Face detected but no match (best: ${(data.bestScore * 100).toFixed(1)}%)`
+          : 'No registered faces found';
+        setScanStatus('detected', reason);
+      }
+    } catch (err) {
+      console.error('[Recognition] Detection error:', err);
+      setScanStatus('error', 'Recognition request failed — check server connection.');
     }
   }
 
@@ -186,16 +192,36 @@ const Recognition = (() => {
   }
 
   /* ── Attendance marker ──────────────────────────────── */
-  function _tryMarkAttendance(student) {
+  async function _tryMarkAttendance(user, confidence) {
     const now = Date.now();
-    if (student.roll === _lastMarkedRoll && now - _lastMarkedAt < COOLDOWN_MS) return;
-    _lastMarkedRoll = student.roll;
+    if (user.roll === _lastMarkedRoll && now - _lastMarkedAt < COOLDOWN_MS) return;
+    _lastMarkedRoll = user.roll;
     _lastMarkedAt   = now;
-    App.markAttendance(student);
+
+    // Mark via backend API
+    try {
+      await fetch(`${API_BASE}/attendance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId:     user.userId,
+          name:       user.name,
+          roll:       user.roll,
+          dept:       user.dept,
+          confidence: confidence
+        })
+      });
+    } catch (err) {
+      console.error('[Recognition] Attendance marking error:', err);
+    }
+
+    App.showAttendanceResult(user, confidence);
+    UI.toast(`✓ ${user.name} — attendance marked`, 'success');
+
     setTimeout(() => Camera.stopAttendanceCamera(), 800);
   }
 
   /* ── Public API ─────────────────────────────────────── */
-  return { loadModels, modelsReady, extractDescriptor, runDetection };
+  return { loadModels, modelsReady, extractDescriptor, runDetection, setScanStatus };
 
 })();
