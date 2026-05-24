@@ -9,7 +9,7 @@ const App = (() => {
   /* ── Persistent state (localStorage) ─────────────────── */
   const KEYS = { students: 'fed_v2_students', attendance: 'fed_v2_attendance' };
 
-  let students   = _load(KEYS.students,   []);
+  let students = _load(KEYS.students, []);
   let attendance = _load(KEYS.attendance, []);
   let _capturedImage = null;
 
@@ -24,10 +24,10 @@ const App = (() => {
 
   /* ── Captured image (temp, between capture & register) ─ */
   function setCapturedImage(dataUrl) { _capturedImage = dataUrl; }
-  function getCapturedImage()        { return _capturedImage;    }
+  function getCapturedImage() { return _capturedImage; }
 
   /* ── Getters ─────────────────────────────────────────── */
-  function getStudents()   { return students;   }
+  function getStudents() { return students; }
   function getAttendance() { return attendance; }
 
   /* ══════════════ STUDENT REGISTRATION ════════════════ */
@@ -38,7 +38,7 @@ const App = (() => {
 
     // Validation
     if (!name) { UI.toast('Please enter the student\'s full name.', 'error'); return; }
-    if (!roll) { UI.toast('Please enter the roll number.', 'error');          return; }
+    if (!roll) { UI.toast('Please enter the roll number.', 'error'); return; }
     if (!_capturedImage) { UI.toast('Please capture the student\'s face first.', 'error'); return; }
     if (students.find(s => s.roll === roll)) {
       UI.toast(`Roll number "${roll}" is already registered.`, 'error'); return;
@@ -57,9 +57,9 @@ const App = (() => {
     }
 
     const student = {
-      id:         Date.now(),
+      id: Date.now(),
       name, roll, dept,
-      photo:      _capturedImage,
+      photo: _capturedImage,
       descriptor: descriptor,
       registeredAt: new Date().toISOString()
     };
@@ -68,7 +68,7 @@ const App = (() => {
     _save(KEYS.students, students);
 
     // Reset form
-    ['regName','regRoll','regDept'].forEach(id => {
+    ['regName', 'regRoll', 'regDept'].forEach(id => {
       const el = document.getElementById(id); if (el) el.value = '';
     });
     _capturedImage = null;
@@ -91,7 +91,7 @@ const App = (() => {
 
   /* ── Student list DOM ───────────────────────────────── */
   function _renderStudentList() {
-    const list  = document.getElementById('studentList');
+    const list = document.getElementById('studentList');
     const count = document.getElementById('studentCount');
     if (!list) return;
 
@@ -126,11 +126,13 @@ const App = (() => {
   /* ══════════════ ATTENDANCE ═══════════════════════════ */
   function markAttendance(student) {
     const ist = UI.getIST();
+    const alreadyMarked = attendance.some(r => r.roll === student.roll && new Date(r.timestamp).toDateString() === todayStr);
+    if (alreadyMarked) return;
     const record = {
-      id:        Date.now(),
-      name:      student.name,
-      roll:      student.roll,
-      dept:      student.dept,
+      id: Date.now(),
+      name: student.name,
+      roll: student.roll,
+      dept: student.dept,
       timestamp: ist.toISOString(),
       formatted: UI.formatIST(ist.toISOString())
     };
@@ -139,10 +141,10 @@ const App = (() => {
     _save(KEYS.attendance, attendance);
 
     // Update result banner
-    const res  = document.getElementById('recResult');
-    const rn   = document.getElementById('recName');
-    const rm   = document.getElementById('recMeta');
-    const rt   = document.getElementById('recTime');
+    const res = document.getElementById('recResult');
+    const rn = document.getElementById('recName');
+    const rm = document.getElementById('recMeta');
+    const rt = document.getElementById('recTime');
     if (res && rn && rm && rt) {
       rn.textContent = student.name;
       rm.textContent = `${student.roll}  ·  ${student.dept}`;
@@ -158,11 +160,11 @@ const App = (() => {
   function updateRecords() {
     const todayStr = UI.getIST().toDateString();
     const todayLogs = attendance.filter(r =>
-      new Date(r.timestamp).toDateString() === todayStr
+      new Date(new Date(r.timestamp).toLocaleString('en-US', { timezone: 'Asia/Kolkata' })).toDateString() === todayStr
     );
 
-    _setText('statTotal',    attendance.length);
-    _setText('statToday',    todayLogs.length);
+    _setText('statTotal', attendance.length);
+    _setText('statToday', todayLogs.length);
     _setText('statStudents', students.length);
 
     const logEl = document.getElementById('attendanceLog');
@@ -224,8 +226,8 @@ const App = (() => {
   }
   function _esc(str) {
     return String(str)
-      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
   /* ── Bootstrap ──────────────────────────────────────── */
@@ -248,4 +250,9 @@ const App = (() => {
 })();
 
 /* ── Entry point ─────────────────────────────────────── */
-window.addEventListener('DOMContentLoaded', () => App.init());
+window.addEventListener('DOMContentLoaded', () => {
+  App.init()
+  document.getElementById('tab-register').addEventListener('click', () => UI.switchTab('register'));
+  document.getElementById('tab-attendance').addEventListener('click', () => UI.switchTab('attendance'));
+  document.getElementById('tab-records').addEventListener('click', () => UI.switchTab('records'));
+});
