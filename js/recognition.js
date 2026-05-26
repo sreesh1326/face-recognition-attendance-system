@@ -14,11 +14,8 @@ const Recognition = (() => {
 
   /* cooldown: prevent spamming the same attendance */
   let _lastMarkedRoll = null;
-  let _lastMarkedAt   = 0;
-  const COOLDOWN_MS   = 6000;
-
-  /* recognition interval */
-  let _recognitionInterval = null;
+  let _lastMarkedAt = 0;
+  const COOLDOWN_MS = 6000;
 
   function setScanStatus(state, message) {
     const badge = document.getElementById('scanState');
@@ -40,9 +37,9 @@ const Recognition = (() => {
 
   /* ── Check backend health + ML pipeline status ─────── */
   async function loadModels() {
-    const dot    = document.getElementById('loaderDot');
-    const text   = document.getElementById('loaderText');
-    const fill   = document.getElementById('loaderFill');
+    const dot = document.getElementById('loaderDot');
+    const text = document.getElementById('loaderText');
+    const fill = document.getElementById('loaderFill');
 
     const step = (pct, msg) => {
       if (fill) fill.style.width = pct + '%';
@@ -72,7 +69,7 @@ const Recognition = (() => {
 
     } catch (err) {
       console.error('[Recognition] Backend connection failed:', err);
-      if (dot)  dot.className = 'loader-dot error';
+      if (dot) dot.className = 'loader-dot error';
       if (text) text.textContent = 'Backend offline — start the server with: cd server && npm start';
       _status = 'error';
       UI.setStatus('offline', 'OFFLINE');
@@ -112,7 +109,7 @@ const Recognition = (() => {
   async function _serverDetection(video, canvas, ctx) {
     // Capture current frame as JPEG data URL
     const W = video.videoWidth, H = video.videoHeight;
-    canvas.width  = W;
+    canvas.width = W;
     canvas.height = H;
     ctx.drawImage(video, 0, 0, W, H);
     const frameDataUrl = canvas.toDataURL('image/jpeg', 0.7);
@@ -134,15 +131,17 @@ const Recognition = (() => {
         const user = data.user;
         const conf = (data.confidence * 100).toFixed(1);
 
+        // NOTE: server returns match only, not face coordinates.
         // Draw bounding box (centered estimate since server returns match only)
         const bw = 180, bh = 220;
         const bx = (W - bw) / 2, by = (H - bh) / 2;
         _drawBox(ctx, bx, by, bw, bh, `${user.name} (${conf}%)`, true);
 
         setScanStatus('matched', `${user.name} recognized with ${conf}% confidence.`);
-        _tryMarkAttendance(user, data.confidence);
+        await _tryMarkAttendance(user, data.confidence);
       } else {
-        // Draw unknown box
+
+        // NOTE: same centered placeholder for unknown face
         const bw = 180, bh = 220;
         const bx = (W - bw) / 2, by = (H - bh) / 2;
         _drawBox(ctx, bx, by, bw, bh, 'Unknown', false);
@@ -165,18 +164,18 @@ const Recognition = (() => {
 
     // Bounding box
     ctx.strokeStyle = color;
-    ctx.lineWidth   = 2;
+    ctx.lineWidth = 2;
     ctx.strokeRect(x, y, w, h);
 
     // Corner accents
     const cs = 14;
     ctx.strokeStyle = color;
-    ctx.lineWidth   = 3;
-    [[x,y],[x+w,y],[x,y+h],[x+w,y+h]].forEach(([cx,cy], i) => {
+    ctx.lineWidth = 3;
+    [[x, y], [x + w, y], [x, y + h], [x + w, y + h]].forEach(([cx, cy], i) => {
       ctx.beginPath();
-      ctx.moveTo(cx + (i%2===0 ? cs : -cs), cy);
+      ctx.moveTo(cx + (i % 2 === 0 ? cs : -cs), cy);
       ctx.lineTo(cx, cy);
-      ctx.lineTo(cx, cy + (i<2 ? cs : -cs));
+      ctx.lineTo(cx, cy + (i < 2 ? cs : -cs));
       ctx.stroke();
     });
 
@@ -186,36 +185,43 @@ const Recognition = (() => {
 
     // Label text
     ctx.fillStyle = '#fff';
-    ctx.font      = 'bold 12px "Syne", sans-serif';
+    ctx.font = 'bold 12px "Syne", sans-serif';
     ctx.textBaseline = 'middle';
     ctx.fillText(label, x + 6, y - labelH / 2);
   }
 
-  /* ── Attendance marker ──────────────────────────────── */
+  /* ── Attendance marker */
   async function _tryMarkAttendance(user, confidence) {
     const now = Date.now();
     if (user.roll === _lastMarkedRoll && now - _lastMarkedAt < COOLDOWN_MS) return;
-    _lastMarkedRoll = user.roll;
-    _lastMarkedAt   = now;
 
-    // Mark via backend API
     try {
       await fetch(`${API_BASE}/attendance`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId:     user.userId,
-          name:       user.name,
-          roll:       user.roll,
-          dept:       user.dept,
+          userId: user.userId,
+          name: user.name,
+          roll: user.roll,
+          dept: user.dept,
           confidence: confidence
         })
       });
+
+      if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
+
+      const data = await resp.json();
+      if (!data.success) throw new Error('Attendance not saved by server');
+
+      _lastMarkedRoll = user.roll;
+      _lastMarkedAt = now;
+
     } catch (err) {
       console.error('[Recognition] Attendance marking error:', err);
     }
 
     App.showAttendanceResult(user, confidence);
+    App.markAttendance(user);
     UI.toast(`✓ ${user.name} — attendance marked`, 'success');
 
     setTimeout(() => Camera.stopAttendanceCamera(), 800);
