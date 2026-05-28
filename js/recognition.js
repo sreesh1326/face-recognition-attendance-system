@@ -196,7 +196,7 @@ const Recognition = (() => {
     if (user.roll === _lastMarkedRoll && now - _lastMarkedAt < COOLDOWN_MS) return;
 
     try {
-      await fetch(`${API_BASE}/attendance`, {
+      const resp = await fetch(`${API_BASE}/attendance`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -212,17 +212,35 @@ const Recognition = (() => {
 
       const data = await resp.json();
       if (!data.success) throw new Error('Attendance not saved by server');
+      if (data.duplicate) {
+        UI.toast(`${user.name} — already marked recently`, 'info');
+        _lastMarkedRoll = user.roll;
+        _lastMarkedAt = now;
+        return;
+      }
 
       _lastMarkedRoll = user.roll;
       _lastMarkedAt = now;
 
+      // Update result banner in attendance panel
+      const res = document.getElementById('recResult');
+      const rn = document.getElementById('recName');
+      const rm = document.getElementById('recMeta');
+      const rt = document.getElementById('recTime');
+      if (res && rn && rm && rt) {
+        rn.textContent = user.name;
+        rm.textContent = `${user.roll}  ·  ${user.dept}`;
+        rt.textContent = `Attendance marked at ${UI.formatIST(new Date().toISOString())}`;
+        res.classList.add('show');
+      }
+
+      UI.toast(`✓ ${user.name} — attendance marked`, 'success');
+      App.updateRecords();
+
     } catch (err) {
       console.error('[Recognition] Attendance marking error:', err);
+      UI.toast('Failed to save attendance — check server.', 'error');
     }
-
-    App.showAttendanceResult(user, confidence);
-    App.markAttendance(user);
-    UI.toast(`✓ ${user.name} — attendance marked`, 'success');
 
     setTimeout(() => Camera.stopAttendanceCamera(), 800);
   }

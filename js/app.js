@@ -1,26 +1,17 @@
 /* ═══════════════════════════════════════════════════════
    FeD — app.js
-   App Module: state management, student registration,
-               attendance logging, DOM rendering
+   App Module: state management via server REST API,
+               student registration, attendance, DOM rendering
    ═══════════════════════════════════════════════════════ */
 
 const App = (() => {
 
-  /* ── Persistent state (localStorage) ─────────────────── */
-  const KEYS = { students: 'fed_v2_students', attendance: 'fed_v2_attendance' };
+  const API_BASE = window.location.origin + '/api';
 
-  let students = _load(KEYS.students, []);
-  let attendance = _load(KEYS.attendance, []);
+  /* ── Local state (synced from server) ──────────────── */
+  let students = [];
+  let attendance = [];
   let _capturedImage = null;
-
-  function _load(key, fallback) {
-    try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; }
-  }
-  function _save(key, val) {
-    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {
-      console.warn('[App] localStorage write failed:', e);
-    }
-  }
 
   /* ── Captured image (temp, between capture & register) ─ */
   function setCapturedImage(dataUrl) { _capturedImage = dataUrl; }
@@ -29,6 +20,44 @@ const App = (() => {
   /* ── Getters ─────────────────────────────────────────── */
   function getStudents() { return students; }
   function getAttendance() { return attendance; }
+
+  /* ══════════════ SERVER HELPERS ═══════════════════════ */
+  async function _api(endpoint, options = {}) {
+    try {
+      const resp = await fetch(`${API_BASE}${endpoint}`, {
+        headers: { 'Content-Type': 'application/json' },
+        ...options
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) {
+        throw new Error(data.error || `Server error ${resp.status}`);
+      }
+      return data;
+    } catch (err) {
+      console.error(`[App] API ${endpoint}:`, err);
+      throw err;
+    }
+  }
+
+  /* ══════════════ FETCH DATA FROM SERVER ═══════════════ */
+  async function fetchStudents() {
+    try {
+      const data = await _api('/users');
+      students = data.users || [];
+      _renderStudentList();
+    } catch (err) {
+      console.warn('[App] Could not fetch students:', err.message);
+    }
+  }
+
+  async function fetchAttendance() {
+    try {
+      const data = await _api('/attendance');
+      attendance = data.records || [];
+    } catch (err) {
+      console.warn('[App] Could not fetch attendance:', err.message);
+    }
+  }
 
   /* ══════════════ STUDENT REGISTRATION ════════════════ */
   async function registerStudent() {
@@ -40,53 +69,45 @@ const App = (() => {
     if (!name) { UI.toast('Please enter the student\'s full name.', 'error'); return; }
     if (!roll) { UI.toast('Please enter the roll number.', 'error'); return; }
     if (!_capturedImage) { UI.toast('Please capture the student\'s face first.', 'error'); return; }
-    if (students.find(s => s.roll === roll)) {
-      UI.toast(`Roll number "${roll}" is already registered.`, 'error'); return;
+
+    UI.toast('Registering student & processing face…', 'info');
+
+    try {
+      const data = await _api('/users/register', {
+        method: 'POST',
+        body: JSON.stringify({ name, roll, dept, photo: _capturedImage })
+      });
+
+      // Reset form
+      ['regName', 'regRoll', 'regDept'].forEach(id => {
+        const el = document.getElementById(id); if (el) el.value = '';
+      });
+      _capturedImage = null;
+      const preview = document.getElementById('capturePreview');
+      if (preview) preview.style.display = 'none';
+
+      UI.toast(`${name} registered successfully!`, 'success');
+
+      // Refresh student list from server
+      await fetchStudents();
+
+    } catch (err) {
+      UI.toast(err.message || 'Registration failed — check server.', 'error');
     }
-
-    UI.toast('Processing face data…', 'info');
-
-    // Try extracting face descriptor
-    let descriptor = null;
-    if (Recognition.modelsReady()) {
-      descriptor = await Recognition.extractDescriptor(_capturedImage);
-      if (!descriptor) {
-        UI.toast('No face detected in captured image — try again.', 'error');
-        return;
-      }
-    }
-
-    const student = {
-      id: Date.now(),
-      name, roll, dept,
-      photo: _capturedImage,
-      descriptor: descriptor,
-      registeredAt: new Date().toISOString()
-    };
-
-    students.push(student);
-    _save(KEYS.students, students);
-
-    // Reset form
-    ['regName', 'regRoll', 'regDept'].forEach(id => {
-      const el = document.getElementById(id); if (el) el.value = '';
-    });
-    _capturedImage = null;
-    const preview = document.getElementById('capturePreview');
-    if (preview) preview.style.display = 'none';
-
-    UI.toast(`${name} registered successfully!`, 'success');
-    _renderStudentList();
   }
 
-  function deleteStudent(roll) {
-    const student = students.find(s => s.roll === roll);
+  async function deleteStudent(roll) {
+    const student = students.find(s => s.roll_number === roll);
     if (!student) return;
     if (!confirm(`Remove "${student.name}" (${roll}) from the system?`)) return;
-    students = students.filter(s => s.roll !== roll);
-    _save(KEYS.students, students);
-    _renderStudentList();
-    UI.toast(`${student.name} removed from system.`, 'info');
+
+    try {
+      await _api(`/users/${roll}`, { method: 'DELETE' });
+      UI.toast(`${student.name} removed from system.`, 'info');
+      await fetchStudents();
+    } catch (err) {
+      UI.toast(err.message || 'Delete failed.', 'error');
+    }
   }
 
   /* ── Student list DOM ───────────────────────────────── */
@@ -116,56 +137,29 @@ const App = (() => {
           <div class="s-avatar">${UI.initials(s.name)}</div>
           <div class="s-info">
             <div class="s-name">${_esc(s.name)}</div>
-            <div class="s-roll">${_esc(s.roll)} &middot; ${_esc(s.dept)}</div>
+            <div class="s-roll">${_esc(s.roll_number)} &middot; ${_esc(s.department)}</div>
           </div>
-          <button class="s-delete" onclick="App.deleteStudent('${_esc(s.roll)}')" title="Remove student">&times;</button>
+          <button class="s-delete" onclick="App.deleteStudent('${_esc(s.roll_number)}')" title="Remove student">&times;</button>
         </div>`).join('')}
     </div>`;
   }
 
   /* ══════════════ ATTENDANCE ═══════════════════════════ */
-  function markAttendance(student) {
-    const ist = UI.getIST();
-    const alreadyMarked = attendance.some(r => r.roll === student.roll && new Date(r.timestamp).toDateString() === todayStr);
-    if (alreadyMarked) return;
-    const record = {
-      id: Date.now(),
-      name: student.name,
-      roll: student.roll,
-      dept: student.dept,
-      timestamp: ist.toISOString(),
-      formatted: UI.formatIST(ist.toISOString())
-    };
-
-    attendance.unshift(record);
-    _save(KEYS.attendance, attendance);
-
-    // Update result banner
-    const res = document.getElementById('recResult');
-    const rn = document.getElementById('recName');
-    const rm = document.getElementById('recMeta');
-    const rt = document.getElementById('recTime');
-    if (res && rn && rm && rt) {
-      rn.textContent = student.name;
-      rm.textContent = `${student.roll}  ·  ${student.dept}`;
-      rt.textContent = `Attendance marked at ${record.formatted}`;
-      res.classList.add('show');
-    }
-
-    UI.toast(`✓ ${student.name} — attendance marked`, 'success');
-    updateRecords();
-  }
 
   /* ── Records panel DOM ──────────────────────────────── */
-  function updateRecords() {
-    const todayStr = UI.getIST().toDateString();
-    const todayLogs = attendance.filter(r =>
-      new Date(new Date(r.timestamp).toLocaleString('en-US', { timezone: 'Asia/Kolkata' })).toDateString() === todayStr
-    );
+  async function updateRecords() {
+    try {
+      // Fetch stats from server
+      const stats = await _api('/stats');
+      _setText('statTotal', stats.totalAttendance);
+      _setText('statToday', stats.todayAttendance);
+      _setText('statStudents', stats.totalUsers);
 
-    _setText('statTotal', attendance.length);
-    _setText('statToday', todayLogs.length);
-    _setText('statStudents', students.length);
+      // Fetch attendance records
+      await fetchAttendance();
+    } catch (err) {
+      console.warn('[App] Stats fetch failed:', err.message);
+    }
 
     const logEl = document.getElementById('attendanceLog');
     if (!logEl) return;
@@ -194,6 +188,7 @@ const App = (() => {
               <th>Roll No.</th>
               <th>Department</th>
               <th>Date &amp; Time (IST)</th>
+              <th>Confidence</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -202,9 +197,10 @@ const App = (() => {
               <tr>
                 <td class="td-num">${String(attendance.length - i).padStart(2, '0')}</td>
                 <td class="td-name">${_esc(r.name)}</td>
-                <td class="td-roll">${_esc(r.roll)}</td>
-                <td class="td-dept">${_esc(r.dept)}</td>
-                <td class="td-time">${_esc(r.formatted)}</td>
+                <td class="td-roll">${_esc(r.roll_number)}</td>
+                <td class="td-dept">${_esc(r.department)}</td>
+                <td class="td-time">${UI.formatIST(r.marked_at)}</td>
+                <td class="td-conf">${r.confidence ? (r.confidence * 100).toFixed(1) + '%' : '—'}</td>
                 <td><span class="badge badge-present">Present</span></td>
               </tr>`).join('')}
           </tbody>
@@ -212,12 +208,16 @@ const App = (() => {
       </div>`;
   }
 
-  function clearRecords() {
+  async function clearRecords() {
     if (!confirm('Clear ALL attendance records? This cannot be undone.')) return;
-    attendance = [];
-    _save(KEYS.attendance, attendance);
-    updateRecords();
-    UI.toast('All attendance records cleared.', 'info');
+    try {
+      await _api('/attendance', { method: 'DELETE' });
+      attendance = [];
+      await updateRecords();
+      UI.toast('All attendance records cleared.', 'info');
+    } catch (err) {
+      UI.toast('Failed to clear records.', 'error');
+    }
   }
 
   /* ── Helpers ─────────────────────────────────────────── */
@@ -225,17 +225,17 @@ const App = (() => {
     const el = document.getElementById(id); if (el) el.textContent = val;
   }
   function _esc(str) {
-    return String(str)
+    return String(str || '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;')
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
   /* ── Bootstrap ──────────────────────────────────────── */
-  function init() {
+  async function init() {
     UI.startClock();
     Recognition.loadModels();
-    _renderStudentList();
-    updateRecords();
+    await fetchStudents();
+    await updateRecords();
   }
 
   /* ── Public API ─────────────────────────────────────── */
@@ -244,7 +244,8 @@ const App = (() => {
     setCapturedImage, getCapturedImage,
     getStudents, getAttendance,
     registerStudent, deleteStudent,
-    markAttendance, updateRecords, clearRecords
+    updateRecords, clearRecords,
+    fetchStudents
   };
 
 })();

@@ -56,11 +56,11 @@ function buildDetectorModel() {
   x = tf.layers.dropout({ rate: 0.3 }).apply(x);
 
   // Output: [confidence, x, y, w, h] normalized 0..1
-  const output = tf.layers.dense({
+  const detOutput = tf.layers.dense({
     units: 5, activation: 'sigmoid', name: 'det_output'
-  }).apply(output);
+  }).apply(x);
 
-  const model = tf.model({ inputs: input, outputs: output, name: 'FaceDetectorNet' });
+  const model = tf.model({ inputs: input, outputs: detOutput, name: 'FaceDetectorNet' });
 
   model.compile({
     optimizer: tf.train.adam(0.001),

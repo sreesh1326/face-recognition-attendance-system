@@ -40,6 +40,8 @@ const Camera = (() => {
       if (preview) preview.style.display = 'none';
       video.srcObject = regStream;
       video.style.display = 'block';
+
+      video.addEventListener('play', () => _regFaceLoop(video), { once: true });
       await video.play().catch(() => { });
 
       document.getElementById('regCamIdle').style.display = 'none';
@@ -47,7 +49,7 @@ const Camera = (() => {
       document.getElementById('regScan').style.display = 'block';
       document.getElementById('btnCapture').disabled = false;
 
-      video.addEventListener('play', () => _regFaceLoop(video), { once: true });
+
     } catch (err) {
       UI.toast('Camera access denied — please allow camera permission.', 'error');
       console.error('[Camera] startRegCamera:', err);
@@ -58,16 +60,15 @@ const Camera = (() => {
     regFaceLoopOn = true;
     const badge = document.getElementById('regFaceBadge');
 
-    const loop = async () => {
+    const loop = () => {
       if (!regFaceLoopOn || !regStream) return;
-      try {
-        if (Recognition.modelsReady()) {
-          const det = await faceapi.detectSingleFace(
-            video, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.4 })
-          );
-          badge.classList.toggle('show', !!det);
-        }
-      } catch (_) { /* silently ignore transient errors */ }
+      // Show face badge when camera is active and ML backend is ready
+      // (actual face detection happens server-side during registration)
+      if (Recognition.modelsReady() && !video.paused && video.readyState >= 2) {
+        badge.classList.add('show');
+      } else {
+        badge.classList.remove('show');
+      }
       if (regFaceLoopOn && regStream) requestAnimationFrame(loop);
     };
     loop();
@@ -160,9 +161,10 @@ const Camera = (() => {
     const ctx = canvas.getContext('2d');
 
     const loop = async () => {
-      if (!attStream || video.paused || video.ended)
-        attRafId = null; s
-      return;
+      if (!attStream || video.paused || video.ended) {
+        attRafId = null;
+        return;
+      }
 
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
